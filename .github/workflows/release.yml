@@ -1,0 +1,39 @@
+name: Clone lazygit, remove restriction, build and release
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  push:
+  workflow_dispatch:
+
+env:
+  GO_VERSION: 1.22
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clone lazygit
+        run: |
+          git clone https://github.com/jesseduffield/lazygit.git .
+
+      - name: Remove restrictions
+        run: |
+          sed -i '/if self\.config\.UsingGpg()/,/}/d' pkg/commands/git_commands/rebase.go pkg/commands/git_commands/patch.go
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.22.x
+
+      - name: Build lazygit
+        run: |
+            GOOS=linux go build
+
+      - name: github-action-publish-binaries
+        uses: skx/github-action-publish-binaries@release-2.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: 'lazygit'
