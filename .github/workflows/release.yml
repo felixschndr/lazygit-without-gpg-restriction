@@ -7,33 +7,120 @@ on:
   workflow_dispatch:
 
 env:
-  GO_VERSION: 1.22
+  LATEST_RELEASE_FILE_NAME: .latest-previously-seen-release
 
 jobs:
-  run:
+  check-for-new-releases:
     runs-on: ubuntu-latest
 
+    outputs:
+      latest-release: ${{ steps.get_release.outputs.LATEST_RELEASE }}
+      new-release-available: ${{ steps.check_release.outputs.NEW_RELEASE_AVAILABLE }}
+
     steps:
+      - name: Checkout own repository
+        uses: actions/checkout@v4
+
+      - name: Get latest lazygit release
+        id: get_release
+        run: |
+          latest_release=$(curl https://api.github.com/repos/jesseduffield/lazygit/releases/latest | jq -r '.name')
+          echo "LATEST_RELEASE=$latest_release" >> $GITHUB_OUTPUT
+
+      - name: Check if release is new
+        id: check_release
+        run: |
+          latest_release=${{ steps.get_release.outputs.LATEST_RELEASE }}
+
+          [[ ! -f $LATEST_RELEASE_FILE_NAME ]] && touch $LATEST_RELEASE_FILE_NAME
+          latest_previously_seen_release=$(cat $LATEST_RELEASE_FILE_NAME)
+
+          if [ "$latest_previously_seen_release" != "$latest_release" ]; then
+            echo "🚀 New release available: $latest_release, the old one was $latest_previously_seen_release" >> $GITHUB_STEP_SUMMARY
+            echo "NEW_RELEASE_AVAILABLE=true" >> $GITHUB_OUTPUT
+          else
+            echo "♻ There is no new release" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  save-new-version:
+    runs-on: ubuntu-latest
+    needs: [ check-for-new-releases ]
+    if: needs.check-for-new-releases.outputs.new-release-available == 'true'
+    steps:
+      - name: Checkout own repository
+        uses: actions/checkout@v4
+
+      - name: Commit updated release name
+        run: |
+          echo "${{ needs.check-for-new-releases.outputs.latest-release }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          echo "${{ needs.check-for-new-releases.outputs.latest-release }}" > $LATEST_RELEASE_FILE_NAME
+          git commit -m "Save latest release of lazygit (${{ needs.check-for-new-releases.outputs.latest-release }})" $LATEST_RELEASE_FILE_NAME
+          git push
+
+  build-lazygit:
+    runs-on: ubuntu-latest
+    needs: [ check-for-new-releases ]
+    if: needs.check-for-new-releases.outputs.new-release-available == 'true'
+    steps:
+      - name: Checkout own repository
+        uses: actions/checkout@v4
+
       - name: Clone lazygit
         run: |
-          git clone https://github.com/jesseduffield/lazygit.git .
+          git clone --depth=1 https://github.com/jesseduffield/lazygit.git
 
       - name: Remove restrictions
         run: |
-          sed -i '/if self\.config\.UsingGpg()/,/}/d' pkg/commands/git_commands/rebase.go pkg/commands/git_commands/patch.go
+          sed -i '/if self\.config\.UsingGpg()/,/}/d' lazygit/pkg/commands/git_commands/rebase.go lazygit/pkg/commands/git_commands/patch.go
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: 1.22.x
+          cache: 'false'
 
       - name: Build lazygit
         run: |
-            GOOS=linux go build
+          cd lazygit/
+          GOOS=linux go build
 
-      - name: github-action-publish-binaries
-        uses: skx/github-action-publish-binaries@release-2.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Save lazygit binary
+        uses: actions/upload-artifact@v4
         with:
-          args: 'lazygit'
+          name: lazygit-binary
+          path: lazygit/lazygit
+
+  create-release:
+    runs-on: ubuntu-latest
+    needs: [ check-for-new-releases, build-lazygit ]
+    if: needs.check-for-new-releases.outputs.new-release-available == 'true'
+    steps:
+      - name: Checkout own repository
+        uses: actions/checkout@v4
+
+      - name: Get lazygit binary
+        uses: actions/download-artifact@v4
+        with:
+          name: lazygit-binary
+
+      - name: Create tag
+        uses: rickstaa/action-create-tag@v1
+        with:
+          tag: ${{ needs.check-for-new-releases.outputs.latest-release }}
+          tag_exists_error: false
+          force_push_tag: true
+
+      - name: Generate Changelog
+        run: |
+          echo -e "> [!IMPORTANT]\n> This is not the official lazygit repository! Take a look at the [README](https://github.com/felixschndr/lazygit-without-gpg-restriction/) for further information." > Changelog.txt
+          latest_release=$(curl https://api.github.com/repos/jesseduffield/lazygit/releases/latest)
+          echo $latest_release | jq -r ".body" >> Changelog.txt
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: lazygit
+          body_path: Changelog.txt
+          tag_name: ${{ needs.check-for-new-releases.outputs.latest-release }}
