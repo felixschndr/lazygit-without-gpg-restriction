@@ -81,16 +81,30 @@ jobs:
           go-version: 1.22.x
           cache: 'false'
 
-      - name: Build lazygit
+      - name: Create directory for builds
+        run: |
+          mkdir lazygit/builds
+
+      - name: Build linux binary
         run: |
           cd lazygit/
-          GOOS=linux go build
+          GOOS=linux go build -o builds/lazygit_${{ needs.check-for-new-releases.outputs.latest-release }}_linux
 
-      - name: Save lazygit binary
+      - name: Build windows binary
+        run: |
+          cd lazygit/
+          GOOS=windows go build -o builds/lazygit_${{ needs.check-for-new-releases.outputs.latest-release }}_windows.exe
+
+      - name: Build darwin binary
+        run: |
+          cd lazygit/
+          GOOS=darwin go build -o builds/lazygit_${{ needs.check-for-new-releases.outputs.latest-release }}_darwin
+
+      - name: Save binaries
         uses: actions/upload-artifact@v4
         with:
-          name: lazygit-binary
-          path: lazygit/lazygit
+          name: lazygit-binaries
+          path: lazygit/builds/
 
   create-release:
     runs-on: ubuntu-latest
@@ -100,10 +114,10 @@ jobs:
       - name: Checkout own repository
         uses: actions/checkout@v4
 
-      - name: Get lazygit binary
+      - name: Get binaries
         uses: actions/download-artifact@v4
         with:
-          name: lazygit-binary
+          name: lazygit-binaries
 
       - name: Create tag
         uses: rickstaa/action-create-tag@v1
@@ -121,6 +135,6 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          files: lazygit
+          files: lazygit_${{ needs.check-for-new-releases.outputs.latest-release }}_*
           body_path: Changelog.txt
           tag_name: ${{ needs.check-for-new-releases.outputs.latest-release }}
