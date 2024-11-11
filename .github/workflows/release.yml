@@ -71,6 +71,10 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/jesseduffield/lazygit.git
 
+      - name: Replace update URL
+        run: |
+          sed -i '/if self\.config\.UsingGpg()/,/}/d' lazygit/pkg/commands/git_commands/rebase.go lazygit/pkg/commands/git_commands/patch.go
+
       - name: Remove restrictions
         run: |
           sed -i '/if self\.config\.UsingGpg()/,/}/d' lazygit/pkg/commands/git_commands/rebase.go lazygit/pkg/commands/git_commands/patch.go
